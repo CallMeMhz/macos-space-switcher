@@ -1,0 +1,81 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Build Universal Binary
+      run: |
+        # Build for Apple Silicon
+        swiftc \
+          -o SpaceSwitcherApp_arm64 \
+          -target arm64-apple-macosx13.0 \
+          -O \
+          -framework Cocoa \
+          -framework SwiftUI \
+          -framework ApplicationServices \
+          -parse-as-library \
+          SpaceSwitcher/SpaceSwitcherApp.swift
+        
+        # Build for Intel
+        swiftc \
+          -o SpaceSwitcherApp_x86 \
+          -target x86_64-apple-macosx13.0 \
+          -O \
+          -framework Cocoa \
+          -framework SwiftUI \
+          -framework ApplicationServices \
+          -parse-as-library \
+          SpaceSwitcher/SpaceSwitcherApp.swift
+        
+        # Create Universal Binary
+        lipo -create SpaceSwitcherApp_arm64 SpaceSwitcherApp_x86 -output SpaceSwitcherApp
+        
+    - name: Create App Bundle
+      run: |
+        mkdir -p SpaceSwitcher.app/Contents/MacOS
+        mkdir -p SpaceSwitcher.app/Contents/Resources
+        cp SpaceSwitcherApp SpaceSwitcher.app/Contents/MacOS/SpaceSwitcher
+        cp SpaceSwitcher/Info.plist SpaceSwitcher.app/Contents/
+        
+        # Ad-hoc sign (allows running without Gatekeeper issues on some systems)
+        codesign --force --deep --sign - SpaceSwitcher.app
+        
+    - name: Create ZIP
+      run: |
+        ditto -c -k --keepParent SpaceSwitcher.app SpaceSwitcher.zip
+        
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SpaceSwitcher
+        path: SpaceSwitcher.zip
+        
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: SpaceSwitcher.zip
+        body: |
+          ## Installation
+          
+          1. Download `SpaceSwitcher.zip` and extract
+          2. Move `SpaceSwitcher.app` to `/Applications`
+          3. **First launch**: Right-click → Open → Click "Open" to confirm
+          4. Grant Accessibility permission when prompted
+          
+          ## Requirements
+          
+          - macOS 13.0 or later
+          - Enable keyboard shortcuts: System Settings → Keyboard → Keyboard Shortcuts → Mission Control → Enable "Switch to Desktop 1-10"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

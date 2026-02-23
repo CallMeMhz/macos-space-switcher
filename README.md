@@ -2,7 +2,7 @@
 
 A lightweight macOS menu bar app for managing and switching virtual desktops (Spaces).
 
-![macOS](https://img.shields.io/badge/macOS-12.0%2B-blue)
+![macOS](https://img.shields.io/badge/macOS-13.0%2B-blue)
 ![Swift](https://img.shields.io/badge/Swift-5.0-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
@@ -31,7 +31,7 @@ A lightweight macOS menu bar app for managing and switching virtual desktops (Sp
 
 ## Requirements
 
-- macOS 12.0 or later
+- macOS 13.0 or later
 - **Accessibility permission** required (for simulating keyboard shortcuts)
 - **Keyboard shortcuts enabled**: System Settings → Keyboard → Keyboard Shortcuts → Mission Control → Enable "Switch to Desktop 1-10"
 
@@ -39,7 +39,9 @@ A lightweight macOS menu bar app for managing and switching virtual desktops (Sp
 
 ### Download Release
 
-Download the latest `SpaceSwitcher.app` from [Releases](../../releases) and move it to `/Applications`.
+Download the latest `SpaceSwitcher.zip` from [Releases](../../releases), extract and move `SpaceSwitcher.app` to `/Applications`.
+
+**First launch**: Right-click the app → Open → Click "Open" to confirm (required for unsigned apps).
 
 ### Build from Source
 
