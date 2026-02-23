@@ -17,12 +17,14 @@ A lightweight macOS menu bar app for managing and switching virtual desktops (Sp
 
 ## Screenshot
 
+![SpaceSwitcher Screenshot](assets/screenshot.jpg)
+
 ```
 ┌───┐ ┌───┐ ┌───┐ ┌───┐    ┌───┐ ┌───┐ ┌───┐
 │ 1 │ │ 2 │ │ 3 │ │ 4 │  | │ A │ │ B │ │ C │
 └───┘ └───┘ └───┘ └───┘    └───┘ └───┘ └───┘
-└─── Display 1 ────┘   │   └─── Display 2 ──┘
-                   separator
+  └─── Display 1 ───┘    │   └ Display 2 ┘
+                     separator
 ```
 
 - Current desktop shown with colored background
