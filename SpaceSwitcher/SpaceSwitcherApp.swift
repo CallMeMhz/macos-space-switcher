@@ -100,13 +100,19 @@ class SpaceManager: ObservableObject {
     
     private typealias CGSMainConnectionIDFunc = @convention(c) () -> UInt32
     private typealias CGSGetActiveSpaceFunc = @convention(c) (UInt32) -> UInt64
+    private typealias CGSCopyManagedDisplaySpacesFunc = @convention(c) (UInt32) -> CFArray?
     
     private let CGSMainConnectionID: CGSMainConnectionIDFunc?
     private let CGSGetActiveSpace: CGSGetActiveSpaceFunc?
+    private let CGSCopyManagedDisplaySpaces: CGSCopyManagedDisplaySpacesFunc?
     
     private let spaceNamesKey = "SpaceNames"
     
     @Published var displays: [DisplayInfo] = []
+    
+    // Cache display order to prevent flickering during space switch
+    private var cachedDisplayOrder: [String] = []
+    private var lastScreenCount: Int = 0
     
     init() {
         skylight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
@@ -114,9 +120,11 @@ class SpaceManager: ObservableObject {
         if let skylight = skylight {
             CGSMainConnectionID = unsafeBitCast(dlsym(skylight, "CGSMainConnectionID"), to: CGSMainConnectionIDFunc.self)
             CGSGetActiveSpace = unsafeBitCast(dlsym(skylight, "CGSGetActiveSpace"), to: CGSGetActiveSpaceFunc.self)
+            CGSCopyManagedDisplaySpaces = unsafeBitCast(dlsym(skylight, "CGSCopyManagedDisplaySpaces"), to: CGSCopyManagedDisplaySpacesFunc.self)
         } else {
             CGSMainConnectionID = nil
             CGSGetActiveSpace = nil
+            CGSCopyManagedDisplaySpaces = nil
         }
         
         refresh()
@@ -129,21 +137,37 @@ class SpaceManager: ObservableObject {
     func getDisplays() -> [DisplayInfo] {
         var result: [DisplayInfo] = []
         
+        // Use UserDefaults for spaces list (matches keyboard shortcut order)
         guard let spacesDict = UserDefaults(suiteName: "com.apple.spaces")?.dictionary(forKey: "SpacesDisplayConfiguration"),
               let managementData = spacesDict["Management Data"] as? [String: Any],
               let monitors = managementData["Monitors"] as? [[String: Any]] else {
             return result
         }
         
-        let currentSpaceId = getCurrentSpaceId()
+        // Get real-time current space IDs from private API
+        let currentSpaceIds = getCurrentSpaceIds()
         
-        // Get screen positions for sorting
-        var screenPositions: [String: CGFloat] = [:]
+        // Build screen info map using CGMainDisplayID for stable main display detection
+        let mainDisplayID = CGMainDisplayID()
+        var screenInfoByUUID: [String: (x: CGFloat, name: String)] = [:]
+        var mainScreenInfo: (x: CGFloat, name: String)? = nil
+        
         for screen in NSScreen.screens {
-            // Try to match by display name or use frame position
-            let screenId = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
-            screenPositions["\(screenId ?? 0)"] = screen.frame.origin.x
+            let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+            if screenNumber == mainDisplayID {
+                mainScreenInfo = (x: screen.frame.origin.x, name: screen.localizedName)
+            } else {
+                // Store by screen number for non-main screens
+                screenInfoByUUID[String(screenNumber)] = (x: screen.frame.origin.x, name: screen.localizedName)
+            }
         }
+        
+        // Get non-main screens sorted by x position for consistent matching
+        let nonMainScreens = NSScreen.screens.filter { 
+            let screenNumber = $0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID ?? 0
+            return screenNumber != mainDisplayID
+        }.sorted { $0.frame.origin.x < $1.frame.origin.x }
+        var nonMainIndex = 0
         
         for monitor in monitors {
             guard let displayId = monitor["Display Identifier"] as? String,
@@ -158,53 +182,44 @@ class SpaceManager: ObservableObject {
             }
             
             var spaces: [SpaceInfo] = []
+            var displayCurrentSpaceId: UInt64 = 0
+            
             for (index, spaceDict) in spacesList.enumerated() {
                 guard let spaceId = spaceDict["ManagedSpaceID"] as? UInt64 ?? (spaceDict["id64"] as? UInt64) else {
                     continue
+                }
+                
+                // Check if this space is current using real-time API
+                let isCurrent = currentSpaceIds.contains(spaceId)
+                if isCurrent {
+                    displayCurrentSpaceId = spaceId
                 }
                 
                 let space = SpaceInfo(
                     id: spaceId,
                     index: index,
                     displayId: displayId,
-                    isCurrent: spaceId == currentSpaceId
+                    isCurrent: isCurrent
                 )
                 spaces.append(space)
             }
             
-            // Get current space for this display
-            var displayCurrentSpaceId: UInt64 = 0
-            if let currentSpace = monitor["Current Space"] as? [String: Any],
-               let spaceId = currentSpace["ManagedSpaceID"] as? UInt64 ?? (currentSpace["id64"] as? UInt64) {
-                displayCurrentSpaceId = spaceId
-            }
-            
-            // Find screen position for this display
+            // Find screen position and name for this display
             var xPosition: CGFloat = 0
-            if displayId == "Main" {
-                // Main display - find the main screen
-                if let mainScreen = NSScreen.main {
-                    xPosition = mainScreen.frame.origin.x
-                }
-            } else {
-                // Secondary display - find by matching non-main screens
-                for (index, screen) in NSScreen.screens.enumerated() {
-                    if screen != NSScreen.main {
-                        xPosition = screen.frame.origin.x
-                        break
-                    }
-                }
-            }
-            
-            // Get display name from NSScreen
             var displayName = "Display"
-            let screenIndex = result.count
+            
             if displayId == "Main" {
-                displayName = NSScreen.main?.localizedName ?? "Main"
+                if let info = mainScreenInfo {
+                    xPosition = info.x
+                    displayName = info.name
+                }
             } else {
-                for screen in NSScreen.screens where screen != NSScreen.main {
+                // Match with non-main screens by order
+                if nonMainIndex < nonMainScreens.count {
+                    let screen = nonMainScreens[nonMainIndex]
+                    xPosition = screen.frame.origin.x
                     displayName = screen.localizedName
-                    break
+                    nonMainIndex += 1
                 }
             }
             
@@ -218,7 +233,7 @@ class SpaceManager: ObservableObject {
             result.append(display)
         }
         
-        // Sort by x position (left to right)
+        // Sort by screen position for display only
         result.sort { $0.xPosition < $1.xPosition }
         
         return result
@@ -232,6 +247,84 @@ class SpaceManager: ObservableObject {
         
         let conn = CGSMainConnectionID()
         return CGSGetActiveSpace(conn)
+    }
+    
+    // Get current space ID for each display using private API
+    // Returns mapping by space ID instead of display ID for reliable matching
+    func getCurrentSpaceIds() -> Set<UInt64> {
+        var result: Set<UInt64> = []
+        
+        guard let CGSMainConnectionID = CGSMainConnectionID,
+              let CGSCopyManagedDisplaySpaces = CGSCopyManagedDisplaySpaces else {
+            return result
+        }
+        
+        let conn = CGSMainConnectionID()
+        guard let displaySpaces = CGSCopyManagedDisplaySpaces(conn) as? [[String: Any]] else {
+            return result
+        }
+        
+        for displayInfo in displaySpaces {
+            if let currentSpace = displayInfo["Current Space"] as? [String: Any],
+               let spaceId = currentSpace["ManagedSpaceID"] as? UInt64 ?? (currentSpace["id64"] as? UInt64) {
+                result.insert(spaceId)
+            }
+        }
+        
+        return result
+    }
+    
+    // Get displays in system original order (for keyboard shortcut mapping)
+    func getDisplaysInSystemOrder() -> [DisplayInfo] {
+        var result: [DisplayInfo] = []
+        
+        guard let spacesDict = UserDefaults(suiteName: "com.apple.spaces")?.dictionary(forKey: "SpacesDisplayConfiguration"),
+              let managementData = spacesDict["Management Data"] as? [String: Any],
+              let monitors = managementData["Monitors"] as? [[String: Any]] else {
+            return result
+        }
+        
+        for monitor in monitors {
+            guard let displayId = monitor["Display Identifier"] as? String,
+                  let spacesList = monitor["Spaces"] as? [[String: Any]],
+                  !spacesList.isEmpty else {
+                continue
+            }
+            
+            if monitor["Collapsed Space"] != nil {
+                continue
+            }
+            
+            var spaces: [SpaceInfo] = []
+            for (index, spaceDict) in spacesList.enumerated() {
+                guard let spaceId = spaceDict["ManagedSpaceID"] as? UInt64 ?? (spaceDict["id64"] as? UInt64) else {
+                    continue
+                }
+                spaces.append(SpaceInfo(id: spaceId, index: index, displayId: displayId, isCurrent: false))
+            }
+            
+            result.append(DisplayInfo(id: displayId, name: "", spaces: spaces, currentSpaceId: 0, xPosition: 0))
+        }
+        
+        return result
+    }
+    
+    func switchToSpaceBySpaceId(_ spaceId: UInt64) {
+        // Use system order to find the correct keyboard shortcut index
+        let systemOrderDisplays = getDisplaysInSystemOrder()
+        var totalIndex = 0
+        
+        for display in systemOrderDisplays {
+            for space in display.spaces {
+                totalIndex += 1
+                if space.id == spaceId {
+                    if totalIndex <= 10 {
+                        sendSpaceSwitch(totalIndex)
+                    }
+                    return
+                }
+            }
+        }
     }
     
     func switchToSpace(displayIndex: Int, spaceIndex: Int) {
@@ -328,6 +421,7 @@ class SpaceManager: ObservableObject {
 class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var statusItems: [NSStatusItem] = []
     var spaceManager = SpaceManager()
+    var spaceIdMap: [Int: UInt64] = [:] // tag -> spaceId mapping
     
     func applicationDidFinishLaunching(_ notification: Notification) {
         updateStatusBar()
@@ -343,7 +437,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     
     func updateStatusBar() {
         let displays = spaceManager.getDisplays()
-        let currentSpaceId = spaceManager.getCurrentSpaceId()
+        
+        // Reset space ID mapping
+        spaceIdMap.removeAll()
         
         // Calculate total items needed: spaces + separators between displays
         var totalItems = 0
@@ -365,51 +461,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
             }
         }
         
-        // Build items in reverse order (so first display appears on left)
+        // statusItems[0] appears rightmost, so we fill in reverse
+        // Visual: [1][2][3] | [1][2][3]  (left to right)
+        // Array:  [5][4][3][sep][2][1][0] indices
+        
         var itemIndex = totalItems - 1
-        var globalSpaceIndex = 0
         
         for (displayIndex, display) in displays.enumerated() {
-            // Add spaces for this display
             for (spaceIndex, space) in display.spaces.enumerated() {
-                globalSpaceIndex += 1
-                guard itemIndex >= 0 && itemIndex < statusItems.count else { continue }
+                guard itemIndex >= 0 else { continue }
                 
                 let item = statusItems[itemIndex]
                 let name = spaceManager.getSpaceName(for: space.id) ?? "\(spaceIndex + 1)"
-                let isCurrent = space.id == currentSpaceId
+                let isCurrent = space.isCurrent
+                
+                spaceIdMap[itemIndex] = space.id
                 
                 if let button = item.button {
-                    button.subviews.forEach { $0.removeFromSuperview() }
-                    button.title = ""
                     button.image = createButtonImage(title: name, isCurrent: isCurrent)
                     button.imagePosition = .imageOnly
-                    
-                    button.tag = globalSpaceIndex
+                    button.tag = itemIndex
                     button.target = self
                     button.action = #selector(switchSpace(_:))
                 }
                 
-                item.menu = nil
                 itemIndex -= 1
             }
             
-            // Add separator after display (except for last one)
+            // Add separator
             if displayIndex < displays.count - 1 {
-                guard itemIndex >= 0 && itemIndex < statusItems.count else { continue }
-                
+                guard itemIndex >= 0 else { continue }
                 let item = statusItems[itemIndex]
-                
                 if let button = item.button {
-                    button.subviews.forEach { $0.removeFromSuperview() }
-                    button.title = ""
                     button.image = createSeparatorImage()
                     button.imagePosition = .imageOnly
                     button.target = nil
                     button.action = nil
                 }
-                
-                item.menu = nil
                 itemIndex -= 1
             }
         }
@@ -472,8 +560,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func switchSpace(_ sender: NSStatusBarButton) {
-        let globalIndex = sender.tag
-        spaceManager.switchToSpaceByGlobalIndex(globalIndex)
+        let tag = sender.tag
+        if let spaceId = spaceIdMap[tag] {
+            spaceManager.switchToSpaceBySpaceId(spaceId)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.updateStatusBar()
         }
