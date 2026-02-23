@@ -1,0 +1,10 @@
+# Build outputs
+*.app/
+SpaceSwitcherApp
+.DS_Store
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
