@@ -13,10 +13,28 @@ struct SpaceSwitcherApp: App {
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     appDelegate.refreshSettingsView()
                 }
+                .background(WindowAccessor())
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 400, height: 500)
     }
+}
+
+// MARK: - Window Accessor (makes window visible on all spaces)
+
+struct WindowAccessor: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async {
+            if let window = view.window {
+                window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+                window.level = .floating
+            }
+        }
+        return view
+    }
+    
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 // MARK: - Display & Space Info
@@ -422,13 +440,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     var statusItems: [NSStatusItem] = []
     var spaceManager = SpaceManager()
     var spaceIdMap: [Int: UInt64] = [:] // tag -> spaceId mapping
+    var settingsMenu: NSMenu!
     
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Create right-click menu
+        settingsMenu = NSMenu()
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        settingsMenu.addItem(settingsItem)
+        settingsMenu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.target = self
+        settingsMenu.addItem(quitItem)
+        
         updateStatusBar()
         
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             self?.updateStatusBar()
         }
+    }
+    
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false  // Don't quit when window is closed
+    }
+    
+    @objc func openSettings() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = NSApp.windows.first(where: { $0.title == "SpaceSwitcher Settings" }) {
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            // Open settings window via SwiftUI
+            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        }
+    }
+    
+    @objc func quitApp() {
+        NSApp.terminate(nil)
     }
     
     func refreshSettingsView() {
@@ -483,6 +530,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
                     button.tag = itemIndex
                     button.target = self
                     button.action = #selector(switchSpace(_:))
+                    button.sendAction(on: [.leftMouseUp, .rightMouseUp])
                 }
                 
                 itemIndex -= 1
@@ -560,6 +608,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, ObservableObject {
     }
     
     @objc func switchSpace(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        
+        // Right click - show menu
+        if event?.type == .rightMouseUp {
+            if let button = sender as? NSButton {
+                settingsMenu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 5), in: button)
+            }
+            return
+        }
+        
+        // Left click - switch space
         let tag = sender.tag
         if let spaceId = spaceIdMap[tag] {
             spaceManager.switchToSpaceBySpaceId(spaceId)
