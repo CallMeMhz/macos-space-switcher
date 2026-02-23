@@ -26,6 +26,7 @@ struct DisplayInfo: Identifiable {
     let name: String
     var spaces: [SpaceInfo]
     var currentSpaceId: UInt64
+    var xPosition: CGFloat = 0
 }
 
 struct SpaceInfo: Identifiable {
@@ -136,6 +137,14 @@ class SpaceManager: ObservableObject {
         
         let currentSpaceId = getCurrentSpaceId()
         
+        // Get screen positions for sorting
+        var screenPositions: [String: CGFloat] = [:]
+        for screen in NSScreen.screens {
+            // Try to match by display name or use frame position
+            let screenId = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+            screenPositions["\(screenId ?? 0)"] = screen.frame.origin.x
+        }
+        
         for monitor in monitors {
             guard let displayId = monitor["Display Identifier"] as? String,
                   let spacesList = monitor["Spaces"] as? [[String: Any]],
@@ -170,15 +179,47 @@ class SpaceManager: ObservableObject {
                 displayCurrentSpaceId = spaceId
             }
             
-            let displayName = displayId == "Main" ? "Main" : "Display \(result.count + 1)"
+            // Find screen position for this display
+            var xPosition: CGFloat = 0
+            if displayId == "Main" {
+                // Main display - find the main screen
+                if let mainScreen = NSScreen.main {
+                    xPosition = mainScreen.frame.origin.x
+                }
+            } else {
+                // Secondary display - find by matching non-main screens
+                for (index, screen) in NSScreen.screens.enumerated() {
+                    if screen != NSScreen.main {
+                        xPosition = screen.frame.origin.x
+                        break
+                    }
+                }
+            }
+            
+            // Get display name from NSScreen
+            var displayName = "Display"
+            let screenIndex = result.count
+            if displayId == "Main" {
+                displayName = NSScreen.main?.localizedName ?? "Main"
+            } else {
+                for screen in NSScreen.screens where screen != NSScreen.main {
+                    displayName = screen.localizedName
+                    break
+                }
+            }
+            
             let display = DisplayInfo(
                 id: displayId,
                 name: displayName,
                 spaces: spaces,
-                currentSpaceId: displayCurrentSpaceId
+                currentSpaceId: displayCurrentSpaceId,
+                xPosition: xPosition
             )
             result.append(display)
         }
+        
+        // Sort by x position (left to right)
+        result.sort { $0.xPosition < $1.xPosition }
         
         return result
     }
@@ -457,32 +498,26 @@ struct SettingsContentView: View {
             
             Text("Click desktop in menu bar to switch")
                 .foregroundColor(.secondary)
-                .padding(.bottom, 20)
+                .padding(.bottom, 15)
             
             Divider()
             
-            List {
+            // Multi-column layout for displays
+            HStack(alignment: .top, spacing: 0) {
                 ForEach(spaceManager.displays) { display in
-                    Section(header: Text(display.name).font(.headline)) {
-                        ForEach(Array(display.spaces.enumerated()), id: \.element.id) { index, space in
-                            HStack {
-                                Text("Desktop \(index + 1)")
-                                    .frame(width: 80, alignment: .leading)
-                                
-                                TextField("Name", text: binding(for: space.id, index: index + 1))
-                                    .textFieldStyle(RoundedBorderTextFieldStyle())
-                                
-                                if space.id == display.currentSpaceId {
-                                    Text("●")
-                                        .foregroundColor(.green)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
+                    DisplayColumnView(
+                        display: display,
+                        names: $names,
+                        spaceManager: spaceManager
+                    )
+                    
+                    if display.id != spaceManager.displays.last?.id {
+                        Divider()
                     }
                 }
             }
             .frame(minHeight: 280)
+            .padding(.horizontal, 10)
             
             Divider()
             
@@ -508,7 +543,7 @@ struct SettingsContentView: View {
             }
             .padding(20)
         }
-        .frame(width: 400, height: 500)
+        .frame(width: CGFloat(max(400, spaceManager.displays.count * 200)), height: 500)
         .onAppear {
             loadNames()
         }
@@ -525,6 +560,49 @@ struct SettingsContentView: View {
                 }
             }
         }
+    }
+}
+
+struct DisplayColumnView: View {
+    let display: DisplayInfo
+    @Binding var names: [UInt64: String]
+    let spaceManager: SpaceManager
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            // Display header
+            Text(display.name)
+                .font(.headline)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(Color.secondary.opacity(0.1))
+            
+            // Desktop list
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(Array(display.spaces.enumerated()), id: \.element.id) { index, space in
+                        HStack {
+                            Text("\(index + 1)")
+                                .frame(width: 24)
+                                .foregroundColor(.secondary)
+                            
+                            TextField("Name", text: binding(for: space.id, index: index + 1))
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                            
+                            if space.id == display.currentSpaceId {
+                                Circle()
+                                    .fill(Color.green)
+                                    .frame(width: 8, height: 8)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+        }
+        .frame(minWidth: 180)
     }
     
     func binding(for spaceId: UInt64, index: Int) -> Binding<String> {

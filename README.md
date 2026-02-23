@@ -8,19 +8,26 @@ A lightweight macOS menu bar app for managing and switching virtual desktops (Sp
 
 ## Features
 
-- 📌 **Menu Bar Display** - All desktops shown directly in menu bar
+- 📌 **Menu Bar Display** - All desktops shown directly in menu bar with styled buttons
+- 🖥️ **Multi-Display Support** - Shows desktops for all connected displays, sorted by physical position
 - 🖱️ **One-Click Switch** - Left click to instantly switch desktop
-- ✏️ **Custom Names** - Right click to rename any desktop
-- 🎯 **Current Indicator** - Active desktop highlighted with `[name]`
+- ✏️ **Custom Names** - Rename desktops in settings window
+- 🎯 **Current Indicator** - Active desktop highlighted with accent color
 - ⚡ **Lightweight** - Native Swift, minimal resource usage
 
 ## Screenshot
 
 ```
- 1   Work  [Code]  Music   5   6 
-                     ↑
-              Current Desktop
+┌───┐ ┌───┐ ┌───┐ ┌───┐    ┌───┐ ┌───┐ ┌───┐
+│ 1 │ │ 2 │ │ 3 │ │ 4 │  | │ A │ │ B │ │ C │
+└───┘ └───┘ └───┘ └───┘    └───┘ └───┘ └───┘
+└─── Display 1 ────┘   │   └─── Display 2 ──┘
+                   separator
 ```
+
+- Current desktop shown with colored background
+- Multiple displays separated by `|`
+- Displays ordered left-to-right based on physical arrangement
 
 ## Requirements
 
@@ -45,9 +52,9 @@ swiftc \
     -o SpaceSwitcherApp \
     -framework Cocoa \
     -framework SwiftUI \
+    -framework ApplicationServices \
     -parse-as-library \
-    SpaceSwitcher/SpaceSwitcherApp.swift \
-    SpaceSwitcher/SpaceManager.swift
+    SpaceSwitcher/SpaceSwitcherApp.swift
 
 # Create app bundle
 mkdir -p SpaceSwitcher.app/Contents/MacOS
@@ -79,8 +86,16 @@ cp -r SpaceSwitcher.app /Applications/
 
 | Action | Result |
 |--------|--------|
-| Left click | Switch to that desktop |
-| Right click | Rename the desktop |
+| Left click on desktop | Switch to that desktop |
+| Open app again | Show settings window |
+
+### Settings Window
+
+- Opens automatically on first launch
+- Reopen the app to access settings again
+- Multi-column layout showing all displays
+- Rename desktops by typing in the text fields
+- Displays are arranged left-to-right matching your physical setup
 
 ## How It Works
 
@@ -88,6 +103,7 @@ SpaceSwitcher uses:
 - `CGEvent` API to simulate `Ctrl + Number` keyboard shortcuts
 - macOS private `SkyLight.framework` to read current Space information
 - `com.apple.spaces` defaults to get desktop list
+- `NSScreen` to detect display arrangement and sort displays
 
 ## Launch at Login
 
@@ -97,8 +113,7 @@ SpaceSwitcher uses:
 
 ## Limitations
 
-- Supports up to 10 desktops (limited by Ctrl+1~0 shortcuts)
-- Only works on the main display
+- Supports up to 10 desktops total across all displays (limited by Ctrl+1~0 shortcuts)
 - Requires keyboard shortcuts to be enabled in System Settings
 
 ## License
