@@ -1,4 +1,4 @@
-# SpaceSwitcher
+# 🖥️ SpaceSwitcher
 
 A lightweight macOS menu bar app for managing and switching virtual desktops (Spaces).
 
