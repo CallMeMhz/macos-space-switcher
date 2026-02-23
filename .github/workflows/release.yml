@@ -13,9 +13,8 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Build Universal Binary
+    - name: Build for Apple Silicon
       run: |
-        # Build for Apple Silicon
         swiftc \
           -o SpaceSwitcherApp_arm64 \
           -target arm64-apple-macosx13.0 \
@@ -25,10 +24,11 @@ jobs:
           -framework ApplicationServices \
           -parse-as-library \
           SpaceSwitcher/SpaceSwitcherApp.swift
-        
-        # Build for Intel
+    
+    - name: Build for Intel
+      run: |
         swiftc \
-          -o SpaceSwitcherApp_x86 \
+          -o SpaceSwitcherApp_x86_64 \
           -target x86_64-apple-macosx13.0 \
           -O \
           -framework Cocoa \
@@ -36,39 +36,66 @@ jobs:
           -framework ApplicationServices \
           -parse-as-library \
           SpaceSwitcher/SpaceSwitcherApp.swift
-        
-        # Create Universal Binary
-        lipo -create SpaceSwitcherApp_arm64 SpaceSwitcherApp_x86 -output SpaceSwitcherApp
-        
-    - name: Create App Bundle
+    
+    - name: Create Universal Binary
       run: |
-        mkdir -p SpaceSwitcher.app/Contents/MacOS
-        mkdir -p SpaceSwitcher.app/Contents/Resources
-        cp SpaceSwitcherApp SpaceSwitcher.app/Contents/MacOS/SpaceSwitcher
-        cp SpaceSwitcher/Info.plist SpaceSwitcher.app/Contents/
-        
-        # Ad-hoc sign (allows running without Gatekeeper issues on some systems)
-        codesign --force --deep --sign - SpaceSwitcher.app
-        
-    - name: Create ZIP
+        lipo -create SpaceSwitcherApp_arm64 SpaceSwitcherApp_x86_64 -output SpaceSwitcherApp_universal
+    
+    - name: Create App Bundles
       run: |
-        ditto -c -k --keepParent SpaceSwitcher.app SpaceSwitcher.zip
+        # ARM64 bundle
+        mkdir -p SpaceSwitcher-arm64.app/Contents/MacOS
+        mkdir -p SpaceSwitcher-arm64.app/Contents/Resources
+        cp SpaceSwitcherApp_arm64 SpaceSwitcher-arm64.app/Contents/MacOS/SpaceSwitcher
+        cp SpaceSwitcher/Info.plist SpaceSwitcher-arm64.app/Contents/
+        codesign --force --deep --sign - SpaceSwitcher-arm64.app
+        ditto -c -k --keepParent SpaceSwitcher-arm64.app SpaceSwitcher-arm64.zip
         
-    - name: Upload Artifact
+        # x86_64 bundle
+        mkdir -p SpaceSwitcher-x86_64.app/Contents/MacOS
+        mkdir -p SpaceSwitcher-x86_64.app/Contents/Resources
+        cp SpaceSwitcherApp_x86_64 SpaceSwitcher-x86_64.app/Contents/MacOS/SpaceSwitcher
+        cp SpaceSwitcher/Info.plist SpaceSwitcher-x86_64.app/Contents/
+        codesign --force --deep --sign - SpaceSwitcher-x86_64.app
+        ditto -c -k --keepParent SpaceSwitcher-x86_64.app SpaceSwitcher-x86_64.zip
+        
+        # Universal bundle
+        mkdir -p SpaceSwitcher-universal.app/Contents/MacOS
+        mkdir -p SpaceSwitcher-universal.app/Contents/Resources
+        cp SpaceSwitcherApp_universal SpaceSwitcher-universal.app/Contents/MacOS/SpaceSwitcher
+        cp SpaceSwitcher/Info.plist SpaceSwitcher-universal.app/Contents/
+        codesign --force --deep --sign - SpaceSwitcher-universal.app
+        ditto -c -k --keepParent SpaceSwitcher-universal.app SpaceSwitcher-universal.zip
+        
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: SpaceSwitcher
-        path: SpaceSwitcher.zip
+        path: |
+          SpaceSwitcher-arm64.zip
+          SpaceSwitcher-x86_64.zip
+          SpaceSwitcher-universal.zip
         
     - name: Create Release
       if: startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v1
       with:
-        files: SpaceSwitcher.zip
+        files: |
+          SpaceSwitcher-arm64.zip
+          SpaceSwitcher-x86_64.zip
+          SpaceSwitcher-universal.zip
         body: |
+          ## Download
+          
+          | File | Description |
+          |------|-------------|
+          | `SpaceSwitcher-universal.zip` | ✅ Recommended - works on both Apple Silicon and Intel |
+          | `SpaceSwitcher-arm64.zip` | Apple Silicon (M1/M2/M3/M4) only |
+          | `SpaceSwitcher-x86_64.zip` | Intel only |
+          
           ## Installation
           
-          1. Download `SpaceSwitcher.zip` and extract
+          1. Download and extract the zip file
           2. Move `SpaceSwitcher.app` to `/Applications`
           3. **First launch**: Right-click → Open → Click "Open" to confirm
           4. Grant Accessibility permission when prompted
